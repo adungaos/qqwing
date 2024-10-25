@@ -3,97 +3,147 @@ use std::path::PathBuf;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
-use qqwing::QQWing;
+use qqwing::{difficulty::Difficulty, PrintStyle, QQWing};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
-    /// Optional name to operate on
-    name: Option<String>,
-
-    /// Sets a custom config file
+    /// Input or Output puzzle file
     #[arg(short, long, value_name = "FILE")]
-    config: Option<PathBuf>,
+    file: Option<PathBuf>,
 
-    /// Turn debugging information on
+    /// Show more verbose information
     #[arg(short, long, action = clap::ArgAction::Count)]
-    debug: u8,
+    verbose: u8,
+
+    /// Set print style
+    #[arg(
+        short,
+        long,
+        value_name = "ONELINE,COMPACT,READABLE,CSV",
+        default_value = "READABLE"
+    )]
+    ps: Option<PrintStyle>,
 
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// generate a puzzle
+    /// Generate a puzzle
     Generate {
-        /// lists test values
-        #[arg(short, long)]
-        list: bool,
+        /// number of puzzles to generate
+        #[arg(short, long, default_value = "1")]
+        nums: u32,
+
+        /// puzzle difficulty level to generate
+        #[arg(
+            short,
+            long,
+            value_name = "UNKNOWN,SIMPLE,EASY,MEDIUM,EXPERT",
+            default_value = "UNKNOWN"
+        )]
+        difficulty: Difficulty,
     },
-    /// solve a puzzle
+    /// Solve a puzzle
     Solve {
-        /// lists test values
+        /// Print the puzzle stats
         #[arg(short, long)]
-        list: bool,
+        stats: bool,
+        /// Print the puzzle
+        #[arg(short, long)]
+        puzzle: String,
     },
 }
 
 fn main() {
+    let cli = Cli::parse();
+    // You can see how many times a particular flag or argument occurred
+    // Note, only flags can have multiple occurrences
+    let max_level = match cli.verbose {
+        0 => Level::WARN,
+        1 => Level::INFO,
+        _ => Level::DEBUG,
+    };
     // a builder for `FmtSubscriber`.
     let subscriber = FmtSubscriber::builder()
         // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
         // will be written to stdout.
-        .with_max_level(Level::INFO)
+        .with_max_level(max_level)
         .with_file(true)
         .with_line_number(true)
         // completes the builder.
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    let mut ss = QQWing::new();
 
-    let cli = Cli::parse();
-    // You can check the value provided by positional arguments, or option arguments
-    if let Some(name) = cli.name.as_deref() {
-        println!("Value for name: {name}");
+    ss.set_print_style(cli.ps.unwrap());
+
+    if let Some(file_path) = cli.file.as_deref() {
+        println!("Value for file: {}", file_path.display());
     }
 
-    if let Some(config_path) = cli.config.as_deref() {
-        println!("Value for config: {}", config_path.display());
-    }
-
-    // You can see how many times a particular flag or argument occurred
-    // Note, only flags can have multiple occurrences
-    match cli.debug {
-        0 => println!("Debug mode is off"),
-        1 => println!("Debug mode is kind of on"),
-        2 => println!("Debug mode is on"),
-        _ => println!("Don't be crazy"),
-    }
+    ss.set_log_history(true);
+    ss.set_record_history(true);
 
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
     match &cli.command {
-        Some(Commands::Generate { list }) => {
-            if *list {
-                println!("Printing testing lists...");
-            } else {
-                println!("Not printing testing lists...");
+        Commands::Generate { nums, difficulty } => {
+            info!("Set puzzle difficulty level {:?} to generate", difficulty);
+            let num = *nums;
+            info!("Start generate puzzle");
+            let mut n = 0;
+            while n < num {
+                ss.generate_puzzle();
+                ss.set_record_history(true);
+                ss.solve();
+                if *difficulty == Difficulty::UNKNOWN || ss.get_difficulty() == *difficulty {
+                    info!(
+                        "get a puzzle with difficulty {:?}, print it:",
+                        ss.get_difficulty()
+                    );
+                    ss.print_puzzle();
+                    n += 1;
+                } else {
+                    info!(
+                        "get a puzzle with difficulty {:?} != {:?}, continue generate...",
+                        ss.get_difficulty(),
+                        *difficulty
+                    );
+                }
             }
         }
-        Some(Commands::Solve { list }) => {
-            if *list {
-                println!("Printing testing lists...");
-            } else {
-                println!("Not printing testing lists...");
+        Commands::Solve { stats, puzzle } => {
+            if puzzle.len() == qqwing::BOARD_SIZE {
+                info!("Set the puzzle");
+                let init_puzzle = read_puzzle(puzzle);
+                ss.set_puzzle(init_puzzle);
+            }
+            info!("Start solve puzzle");
+            if ss.solve() {
+                ss.print_solve_instructions();
+            }
+            if *stats {
+                println!("{}", ss.get_stats());
             }
         }
-        None => {}
     }
+}
 
-    let mut ss = QQWing::new();
-    info!("start generate puzzle");
-    ss.set_log_history(true);
-    ss.set_record_history(true);
-    ss.generate_puzzle();
-    ss.print_puzzle();
+/**
+ * Read a sudoku puzzle from a String input. Any digit is
+ * used to fill the sudoku, any other character is ignored.
+ */
+fn read_puzzle(puzzle_str: &str) -> Vec<u8> {
+    let mut puzzle = Vec::new();
+    for c in puzzle_str.chars() {
+        let n = c.to_digit(10);
+        match n {
+            Some(n) => puzzle.push(n as u8),
+            None => puzzle.push(0),
+        }
+    }
+    puzzle
 }

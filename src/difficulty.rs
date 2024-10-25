@@ -1,24 +1,11 @@
-#[derive(Debug)]
+use strum::{EnumIter, EnumString};
+
+#[derive(Debug, PartialEq, Clone, EnumString, EnumIter)]
 pub enum Difficulty {
     UNKNOWN,
     SIMPLE,
     EASY,
-    INTERMEDIATE,
+    MEDIUM,
     EXPERT,
 }
 
-// 	public static Difficulty get(String s) {
-// 		if (s == null) return null;
-// 		try {
-// 			s = s.toUpperCase(Locale.ENGLISH);
-// 			return valueOf(s);
-// 		} catch (IllegalArgumentException aix) {
-// 			return null;
-// 		}
-// 	}
-
-// 	public String getName() {
-// 		String name = toString();
-// 		return name.substring(0, 1) + name.substring(1).toLowerCase(Locale.ENGLISH);
-// 	}
-// }

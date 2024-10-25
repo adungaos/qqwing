@@ -1,22 +1,43 @@
+//! qqwing - Sudoku solver and generator
+//!
+//! Copyright (C) 2006-2014 Stephen Ostermiller <http://ostermiller.org/>
+//!
+//! Copyright (C) 2007 Jacques Bensimon (jacques@ipm.com)
+//!
+//! Copyright (C) 2007 Joel Yarde (joel.yarde - gmail.com)
+//!
+//!
+//! This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version.
+//!
+//! This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+//!
+//! You should have received a copy of the GNU General Public License along with this program; if not, write to the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
 use rand::{self, random, seq::SliceRandom, thread_rng};
 use std::usize;
+use strum::{EnumIter, EnumString};
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, info};
 
 use difficulty::Difficulty;
 use logitem::LogItem;
 use logtype::LogType;
 use symmetry::Symmetry;
 
-mod difficulty;
-mod logitem;
-mod logtype;
-mod symmetry;
-
+/// Module for puzzle difficulty.
+pub mod difficulty;
+/// Module for log item.
+pub mod logitem;
+/// Module for log type.
+pub mod logtype;
+/// Module for puzzle symmetry.
+pub mod symmetry;
+const UNSET_VALUE: usize = 4294967295;
+const NL: &str = "\n";
 const GRID_SIZE: usize = 3;
 const ROW_COL_SEC_SIZE: usize = GRID_SIZE * GRID_SIZE;
 const SEC_GROUP_SIZE: usize = ROW_COL_SEC_SIZE * GRID_SIZE;
-const BOARD_SIZE: usize = ROW_COL_SEC_SIZE * ROW_COL_SEC_SIZE;
+pub const BOARD_SIZE: usize = ROW_COL_SEC_SIZE * ROW_COL_SEC_SIZE;
 const POSSIBILITY_SIZE: usize = BOARD_SIZE * ROW_COL_SEC_SIZE;
 
 #[derive(Error, Debug)]
@@ -29,6 +50,8 @@ pub enum QQWingError {
     PositionImpossible,
 }
 
+/// The board containing all the memory structures and methods for solving or
+/// generating sudoku puzzles.
 #[derive(Debug)]
 pub struct QQWing {
     /**
@@ -104,7 +127,7 @@ pub struct QQWing {
     /**
      * The style with which to print puzzles and solutions
      */
-    print_style: PrintStyle,
+    pub print_style: PrintStyle,
 }
 
 impl QQWing {
@@ -129,7 +152,7 @@ impl QQWing {
      * Get the number of cells that are set in the puzzle (as opposed to figured
      * out in the solution
      */
-    pub fn get_given_count(&self) -> u32 {
+    fn get_given_count(&self) -> u32 {
         let mut count = 0;
         for i in 0..BOARD_SIZE {
             if self.puzzle[i] != 0 {
@@ -140,8 +163,7 @@ impl QQWing {
     }
 
     /**
-     * Set the board to the given puzzle. The given puzzle must be an array of
-     * 81 integers.
+     * Set the board to the given puzzle. The given puzzle must be an array of 81 integers.
      */
     pub fn set_puzzle(&mut self, init_puzzle: Vec<u8>) -> bool {
         for i in 0..BOARD_SIZE {
@@ -155,7 +177,6 @@ impl QQWing {
      * clears any solution, resets statistics, and clears any history messages.
      */
     fn reset(&mut self) -> bool {
-        debug!("Reset!");
         self.solution.fill(0);
         self.solution_round.fill(0);
         self.possibilities.fill(0);
@@ -191,23 +212,23 @@ impl QQWing {
      *
      * This method will return Difficulty::UNKNOWN unless
      * a puzzle has been generated or set and then the following methods called:
-     * setRecordHistory(true), and solve()
+     * set_record_history(true), and solve()
      */
     pub fn get_difficulty(&self) -> Difficulty {
         if self.get_guess_count() > 0 {
             return Difficulty::EXPERT;
         }
         if self.get_box_line_reduction_count() > 0 {
-            return Difficulty::INTERMEDIATE;
+            return Difficulty::MEDIUM;
         }
         if self.get_pointing_pair_triple_count() > 0 {
-            return Difficulty::INTERMEDIATE;
+            return Difficulty::MEDIUM;
         }
         if self.get_hidden_pair_count() > 0 {
-            return Difficulty::INTERMEDIATE;
+            return Difficulty::MEDIUM;
         }
         if self.get_naked_pair_count() > 0 {
-            return Difficulty::INTERMEDIATE;
+            return Difficulty::MEDIUM;
         }
         if self.get_hidden_single_count() > 0 {
             return Difficulty::EASY;
@@ -222,7 +243,7 @@ impl QQWing {
      * Get the number of cells for which the solution was determined because
      * there was only one possible value for that cell.
      */
-    pub fn get_single_count(&self) -> usize {
+    fn get_single_count(&self) -> usize {
         QQWing::get_log_count(&self.solve_instructions, LogType::Single)
     }
 
@@ -286,7 +307,7 @@ impl QQWing {
      * Get the number of backtracks (unlucky guesses) required when solving this
      * puzzle.
      */
-    pub fn get_backtrack_count(&self) -> usize {
+    fn get_backtrack_count(&self) -> usize {
         QQWing::get_log_count(&self.solve_history, LogType::Rollback)
     }
 
@@ -297,28 +318,29 @@ impl QQWing {
     }
 
     fn clear_puzzle(&mut self) {
-        // Clear any existing puzzle
+        debug!("Clear any existing puzzle");
         for i in 0..BOARD_SIZE {
             self.puzzle[i] = 0;
         }
         self.reset();
     }
 
+    /// Generate a new sudoku puzzle.
     pub fn generate_puzzle(&mut self) -> bool {
         self.generate_puzzle_symmetry(Symmetry::NONE)
     }
 
-    pub fn generate_puzzle_symmetry(&mut self, symmetry: Symmetry) -> bool {
+    fn generate_puzzle_symmetry(&mut self, symmetry: Symmetry) -> bool {
         let mut symmetry = symmetry;
         if symmetry == Symmetry::RANDOM {
             symmetry = QQWing::get_random_symmetry();
         }
         debug!("Symmetry: {:?}", symmetry);
         // Don't record history while generating.
-        // let rec_history = self.record_history;
-        self.record_history = false;
-        // let l_history = self.log_history;
-        self.log_history = false;
+        let rec_history = self.record_history;
+        self.set_record_history(false);
+        let l_history = self.record_history;
+        self.set_log_history(false);
 
         self.clear_puzzle();
 
@@ -330,8 +352,6 @@ impl QQWing {
         // uses random algorithms, so we should have a
         // really randomly totally filled sudoku
         // Even when starting from an empty grid
-        debug!("Start: {:?}", self);
-
         self.solve();
 
         if symmetry == Symmetry::NONE {
@@ -360,9 +380,9 @@ impl QQWing {
             // check all the positions, but in shuffled order
             let position = self.random_board_array[i] as usize;
             if self.puzzle[position] > 0 {
-                let mut positionsym1 = 65535;
-                let mut positionsym2 = 65535;
-                let mut positionsym3 = 65535;
+                let mut positionsym1 = UNSET_VALUE;
+                let mut positionsym2 = UNSET_VALUE;
+                let mut positionsym3 = UNSET_VALUE;
                 match symmetry {
                     Symmetry::ROTATE90 => {
                         positionsym2 = QQWing::row_column_to_cell(
@@ -399,17 +419,17 @@ impl QQWing {
                 let saved_value = self.puzzle[position];
                 self.puzzle[position] = 0;
                 let mut saved_sym1 = 0;
-                if positionsym1 != 65535 {
+                if positionsym1 != UNSET_VALUE {
                     saved_sym1 = self.puzzle[positionsym1];
                     self.puzzle[positionsym1] = 0;
                 }
                 let mut saved_sym2 = 0;
-                if positionsym2 != 65535 {
+                if positionsym2 != UNSET_VALUE {
                     saved_sym2 = self.puzzle[positionsym2];
                     self.puzzle[positionsym2] = 0;
                 }
                 let mut saved_sym3 = 0;
-                if positionsym3 != 65535 {
+                if positionsym3 != UNSET_VALUE {
                     saved_sym3 = self.puzzle[positionsym3];
                     self.puzzle[positionsym3] = 0;
                 }
@@ -417,13 +437,13 @@ impl QQWing {
                 if self.count_solutions_round(2, true) > 1 {
                     // Put it back in, it is needed
                     self.puzzle[position] = saved_value;
-                    if positionsym1 != 65535 && saved_sym1 != 0 {
+                    if positionsym1 != UNSET_VALUE && saved_sym1 != 0 {
                         self.puzzle[positionsym1] = saved_sym1;
                     }
-                    if positionsym2 != 65535 && saved_sym2 != 0 {
+                    if positionsym2 != UNSET_VALUE && saved_sym2 != 0 {
                         self.puzzle[positionsym2] = saved_sym2;
                     }
-                    if positionsym3 != 65535 && saved_sym3 != 0 {
+                    if positionsym3 != UNSET_VALUE && saved_sym3 != 0 {
                         self.puzzle[positionsym3] = saved_sym3;
                     }
                 }
@@ -434,10 +454,10 @@ impl QQWing {
         self.reset();
 
         // Restore recording history.
-        // self.setRecordHistory(recHistory);
-        // self.setLogHistory(lHistory);
+        self.set_record_history(rec_history);
+        self.set_log_history(l_history);
 
-        return true;
+        true
     }
 
     fn rollback_non_guesses(&mut self) {
@@ -465,7 +485,7 @@ impl QQWing {
 
     fn add_history_item(&mut self, l: LogItem) {
         if self.log_history {
-            println!("{:?}", l);
+            info!("{}", l);
         }
         if self.record_history {
             self.solve_history.push(l.clone()); // ->push_back(l);
@@ -484,29 +504,30 @@ impl QQWing {
             if self.print_style == PrintStyle::CSV {
                 sb.push_str(" -- ");
             } else {
-                // sb.push(NL);
+                sb.push_str(NL);
             }
         }
         for i in 0..v.len() {
-            sb.push_str(&i.to_string());
-            sb.push_str("1. ");
-            println!("{:?}", v.get(i));
+            sb.push_str(&(i + 1).to_string());
+            sb.push_str(". ");
+            sb.push_str(format!("{}", v[i]).as_str());
             if self.print_style == PrintStyle::CSV {
                 sb.push_str(" -- ");
             } else {
-                // sb.push(NL);
+                sb.push_str(NL);
             }
         }
         if self.print_style == PrintStyle::CSV {
             sb.push_str(",");
         } else {
-            // sb.push(NL);
+            sb.push_str(NL);
         }
         sb
     }
 
     pub fn print_solve_instructions(&self) {
-        print!("{}", self.get_solve_instructions_string());
+        println!("\nSolve instructions:");
+        println!("{}", self.get_solve_instructions_string());
     }
 
     fn get_solve_instructions_string(&self) -> String {
@@ -536,6 +557,7 @@ impl QQWing {
         self.solve_history.clone()
     }
 
+    /// Solve the puzzle.
     pub fn solve(&mut self) -> bool {
         self.reset();
         self.shuffle_random_arrays();
@@ -567,7 +589,7 @@ impl QQWing {
             }
             guess_number += 1;
         }
-        return false;
+        false
     }
 
     /**
@@ -604,7 +626,7 @@ impl QQWing {
      * Count the number of solutions to the puzzle
      * but return two any time there are two or
      * more solutions.  This method will run much
-     * faster than countSolutions() when there
+     * faster than count_total_solutions() when there
      * are many possible solutions and can be used
      * when you are interested in knowing if the
      * puzzle has zero, one, or multiple solutions.
@@ -687,6 +709,7 @@ impl QQWing {
         }
     }
 
+    /// Check if the puzzle is solved.
     pub fn is_solved(&self) -> bool {
         for i in 0..BOARD_SIZE {
             if self.solution[i] == 0 {
@@ -711,7 +734,7 @@ impl QQWing {
                 }
             }
         }
-        return false;
+        false
     }
 
     fn find_position_with_fewest_possibilities(&self) -> usize {
@@ -814,7 +837,7 @@ impl QQWing {
             return true;
         }
         debug!("single_solve_move round {} is false", round);
-        return false;
+        false
     }
 
     fn col_box_reduction(&mut self, round: u8) -> bool {
@@ -823,14 +846,14 @@ impl QQWing {
             for col in 0..ROW_COL_SEC_SIZE {
                 let col_start = col;
                 let mut in_one_box = true;
-                let mut col_box = 65535;
+                let mut col_box = UNSET_VALUE;
                 for i in 0..GRID_SIZE {
                     for j in 0..GRID_SIZE {
                         let row = i * GRID_SIZE + j;
                         let position = QQWing::row_column_to_cell(row, col);
                         let val_pos = QQWing::get_possibility_index(val_index, position);
                         if self.possibilities[val_pos] == 0 {
-                            if col_box == 65535 || col_box == i {
+                            if col_box == UNSET_VALUE || col_box == i {
                                 col_box = i;
                             } else {
                                 in_one_box = false;
@@ -838,7 +861,7 @@ impl QQWing {
                         }
                     }
                 }
-                if in_one_box && col_box != 65535 {
+                if in_one_box && col_box != UNSET_VALUE {
                     let mut done_something = false;
                     let row = GRID_SIZE * col_box;
                     let sec_start =
@@ -880,14 +903,14 @@ impl QQWing {
             for row in 0..ROW_COL_SEC_SIZE {
                 let row_start = row * 9;
                 let mut in_one_box = true;
-                let mut row_box = 65535;
+                let mut row_box = UNSET_VALUE;
                 for i in 0..GRID_SIZE {
                     for j in 0..GRID_SIZE {
                         let column = i * GRID_SIZE + j;
                         let position = QQWing::row_column_to_cell(row, column);
                         let val_pos = QQWing::get_possibility_index(val_index, position);
                         if self.possibilities[val_pos] == 0 {
-                            if row_box == 65535 || row_box == i {
+                            if row_box == UNSET_VALUE || row_box == i {
                                 row_box = i;
                             } else {
                                 in_one_box = false;
@@ -895,7 +918,7 @@ impl QQWing {
                         }
                     }
                 }
-                if in_one_box && row_box != 65535 {
+                if in_one_box && row_box != UNSET_VALUE {
                     let mut done_something = false;
                     let column = GRID_SIZE * row_box;
                     let sec_start =
@@ -928,7 +951,7 @@ impl QQWing {
                 }
             }
         }
-        return false;
+        false
     }
 
     fn pointing_row_reduction(&mut self, round: u8) -> bool {
@@ -937,13 +960,13 @@ impl QQWing {
             for section in 0..ROW_COL_SEC_SIZE {
                 let sec_start = QQWing::section_to_first_cell(section);
                 let mut in_one_row = true;
-                let mut box_row = 65535;
+                let mut box_row = UNSET_VALUE;
                 for j in 0..GRID_SIZE {
                     for i in 0..GRID_SIZE {
                         let sec_val = sec_start + i + (ROW_COL_SEC_SIZE * j);
                         let val_pos = QQWing::get_possibility_index(val_index, sec_val);
                         if self.possibilities[val_pos] == 0 {
-                            if box_row == 65535 || box_row == j {
+                            if box_row == UNSET_VALUE || box_row == j {
                                 box_row = j;
                             } else {
                                 in_one_row = false;
@@ -951,7 +974,7 @@ impl QQWing {
                         }
                     }
                 }
-                if in_one_row && box_row != 65535 {
+                if in_one_row && box_row != UNSET_VALUE {
                     let mut done_something = false;
                     let row = QQWing::cell_to_row(sec_start) + box_row;
                     let row_start = row * 9;
@@ -988,13 +1011,13 @@ impl QQWing {
             for section in 0..ROW_COL_SEC_SIZE {
                 let sec_start = QQWing::section_to_first_cell(section);
                 let mut in_one_col = true;
-                let mut box_col = 65535;
+                let mut box_col = UNSET_VALUE;
                 for i in 0..GRID_SIZE {
                     for j in 0..GRID_SIZE {
                         let sec_val = sec_start + i + (ROW_COL_SEC_SIZE * j);
                         let val_pos = QQWing::get_possibility_index(val_index, sec_val);
                         if self.possibilities[val_pos] == 0 {
-                            if box_col == 65535 || box_col == i {
+                            if box_col == UNSET_VALUE || box_col == i {
                                 box_col = i;
                             } else {
                                 in_one_col = false;
@@ -1002,7 +1025,7 @@ impl QQWing {
                         }
                     }
                 }
-                if in_one_col && box_col != 65535 {
+                if in_one_col && box_col != UNSET_VALUE {
                     let mut done_something = false;
                     let col = QQWing::cell_to_column(sec_start) + box_col;
                     let col_start = col;
@@ -1030,7 +1053,7 @@ impl QQWing {
                 }
             }
         }
-        return false;
+        false
     }
 
     fn count_possibilities(&self, position: usize) -> u32 {
@@ -1041,7 +1064,7 @@ impl QQWing {
                 count += 1;
             }
         }
-        return count;
+        count
     }
 
     fn are_possibilities_same(&self, position1: usize, position2: usize) -> bool {
@@ -1080,16 +1103,16 @@ impl QQWing {
         debug!("hidden_pair_in_column round: {}", round);
         for column in 0..ROW_COL_SEC_SIZE {
             for val_index in 0..ROW_COL_SEC_SIZE {
-                let mut r1 = 65535;
-                let mut r2 = 65535;
+                let mut r1 = UNSET_VALUE;
+                let mut r2 = UNSET_VALUE;
                 let mut val_count = 0;
                 for row in 0..ROW_COL_SEC_SIZE {
                     let position = QQWing::row_column_to_cell(row, column);
                     let val_pos = QQWing::get_possibility_index(val_index, position);
                     if self.possibilities[val_pos] == 0 {
-                        if r1 == 65535 || r1 == row {
+                        if r1 == UNSET_VALUE || r1 == row {
                             r1 = row;
-                        } else if r2 == 65535 || r2 == row {
+                        } else if r2 == UNSET_VALUE || r2 == row {
                             r2 = row;
                         }
                         val_count += 1;
@@ -1097,16 +1120,16 @@ impl QQWing {
                 }
                 if val_count == 2 {
                     for val_index2 in (val_index + 1)..ROW_COL_SEC_SIZE {
-                        let mut r3 = 65535;
-                        let mut r4 = 65535;
+                        let mut r3 = UNSET_VALUE;
+                        let mut r4 = UNSET_VALUE;
                         let mut val_count2 = 0;
                         for row in 0..ROW_COL_SEC_SIZE {
                             let position = QQWing::row_column_to_cell(row, column);
                             let val_pos = QQWing::get_possibility_index(val_index2, position);
                             if self.possibilities[val_pos] == 0 {
-                                if r3 == 65535 || r3 == row {
+                                if r3 == UNSET_VALUE || r3 == row {
                                     r3 = row;
-                                } else if r4 == 65535 || r4 == row {
+                                } else if r4 == UNSET_VALUE || r4 == row {
                                     r4 = row;
                                 }
                                 val_count2 += 1;
@@ -1155,16 +1178,16 @@ impl QQWing {
         debug!("hidden_pair_in_section round: {}", round);
         for section in 0..ROW_COL_SEC_SIZE {
             for val_index in 0..ROW_COL_SEC_SIZE {
-                let mut si1 = 65535;
-                let mut si2 = 65535;
+                let mut si1 = UNSET_VALUE;
+                let mut si2 = UNSET_VALUE;
                 let mut val_count = 0;
                 for sec_ind in 0..ROW_COL_SEC_SIZE {
                     let position = QQWing::section_to_cell(section, sec_ind);
                     let val_pos = QQWing::get_possibility_index(val_index, position);
                     if self.possibilities[val_pos] == 0 {
-                        if si1 == 65535 || si1 == sec_ind {
+                        if si1 == UNSET_VALUE || si1 == sec_ind {
                             si1 = sec_ind;
-                        } else if si2 == 65535 || si2 == sec_ind {
+                        } else if si2 == UNSET_VALUE || si2 == sec_ind {
                             si2 = sec_ind;
                         }
                         val_count += 1;
@@ -1172,16 +1195,16 @@ impl QQWing {
                 }
                 if val_count == 2 {
                     for val_index2 in (val_index + 1)..ROW_COL_SEC_SIZE {
-                        let mut si3 = 65535;
-                        let mut si4 = 65535;
+                        let mut si3 = UNSET_VALUE;
+                        let mut si4 = UNSET_VALUE;
                         let mut val_count2 = 0;
                         for sec_ind in 0..ROW_COL_SEC_SIZE {
                             let position = QQWing::section_to_cell(section, sec_ind);
                             let val_pos = QQWing::get_possibility_index(val_index2, position);
                             if self.possibilities[val_pos] == 0 {
-                                if si3 == 65535 || si3 == sec_ind {
+                                if si3 == UNSET_VALUE || si3 == sec_ind {
                                     si3 = sec_ind;
-                                } else if si4 == 65535 || si4 == sec_ind {
+                                } else if si4 == UNSET_VALUE || si4 == sec_ind {
                                     si4 = sec_ind;
                                 }
                                 val_count2 += 1;
@@ -1223,23 +1246,23 @@ impl QQWing {
                 }
             }
         }
-        return false;
+        false
     }
 
     fn hidden_pair_in_row(&mut self, round: u8) -> bool {
         debug!("hidden_pair_in_row round: {}", round);
         for row in 0..ROW_COL_SEC_SIZE {
             for val_index in 0..ROW_COL_SEC_SIZE {
-                let mut c1 = 65535;
-                let mut c2 = 65535;
+                let mut c1 = UNSET_VALUE;
+                let mut c2 = UNSET_VALUE;
                 let mut val_count = 0;
                 for column in 0..ROW_COL_SEC_SIZE {
                     let position = QQWing::row_column_to_cell(row, column);
                     let val_pos = QQWing::get_possibility_index(val_index, position);
                     if self.possibilities[val_pos] == 0 {
-                        if c1 == 65535 || c1 == column {
+                        if c1 == UNSET_VALUE || c1 == column {
                             c1 = column;
-                        } else if c2 == 65535 || c2 == column {
+                        } else if c2 == UNSET_VALUE || c2 == column {
                             c2 = column;
                         }
                         val_count += 1;
@@ -1247,16 +1270,16 @@ impl QQWing {
                 }
                 if val_count == 2 {
                     for val_index2 in (val_index + 1)..ROW_COL_SEC_SIZE {
-                        let mut c3 = 65535;
-                        let mut c4 = 65535;
+                        let mut c3 = UNSET_VALUE;
+                        let mut c4 = UNSET_VALUE;
                         let mut val_count2 = 0;
                         for column in 0..ROW_COL_SEC_SIZE {
                             let position = QQWing::row_column_to_cell(row, column);
                             let val_pos = QQWing::get_possibility_index(val_index2, position);
                             if self.possibilities[val_pos] == 0 {
-                                if c3 == 65535 || c3 == column {
+                                if c3 == UNSET_VALUE || c3 == column {
                                     c3 = column;
-                                } else if c4 == 65535 || c4 == column {
+                                } else if c4 == UNSET_VALUE || c4 == column {
                                     c4 = column;
                                 }
                                 val_count2 += 1;
@@ -1434,7 +1457,7 @@ impl QQWing {
                 }
             }
         }
-        return false;
+        false
     }
 
     /**
@@ -1472,7 +1495,7 @@ impl QQWing {
                 }
             }
         }
-        return false;
+        false
     }
 
     /**
@@ -1513,7 +1536,7 @@ impl QQWing {
                 }
             }
         }
-        return false;
+        false
     }
 
     /**
@@ -1548,7 +1571,7 @@ impl QQWing {
                 }
             }
         }
-        return false;
+        false
     }
 
     /**
@@ -1634,7 +1657,6 @@ impl QQWing {
     }
 
     fn puzzle_to_string(&self, sudoku: [u8; 81]) -> String {
-        let nl = "\n";
         let mut sb = String::new();
         for i in 0..BOARD_SIZE {
             if self.print_style == PrintStyle::READABLE {
@@ -1649,23 +1671,23 @@ impl QQWing {
                 if self.print_style == PrintStyle::CSV {
                     sb.push_str(",");
                 } else {
-                    sb.push_str(nl);
+                    sb.push_str(NL);
                 }
                 if self.print_style == PrintStyle::READABLE
                     || self.print_style == PrintStyle::COMPACT
                 {
-                    sb.push_str(nl);
+                    sb.push_str(NL);
                 }
             } else if i % ROW_COL_SEC_SIZE == ROW_COL_SEC_SIZE - 1 {
                 if self.print_style == PrintStyle::READABLE
                     || self.print_style == PrintStyle::COMPACT
                 {
-                    sb.push_str(nl);
+                    sb.push_str(NL);
                 }
                 if i % SEC_GROUP_SIZE == SEC_GROUP_SIZE - 1 {
                     if self.print_style == PrintStyle::READABLE {
                         sb.push_str("-------|-------|-------");
-                        sb.push_str(nl);
+                        sb.push_str(NL);
                     }
                 }
             } else if i % GRID_SIZE == GRID_SIZE - 1 {
@@ -1673,6 +1695,75 @@ impl QQWing {
                     sb.push_str(" |");
                 }
             }
+        }
+        sb
+    }
+
+    /// Print any stats we were able to gather while solving the puzzle.
+    pub fn get_stats(&self) -> String {
+        let mut sb = String::new();
+        let given_count = self.get_given_count();
+        let single_count = self.get_single_count();
+        let hidden_single_count = self.get_hidden_single_count();
+        let naked_pair_count = self.get_naked_pair_count();
+        let hidden_pair_count = self.get_hidden_pair_count();
+        let pointing_pair_triple_count = self.get_pointing_pair_triple_count();
+        let box_reduction_count = self.get_box_line_reduction_count();
+        let guess_count = self.get_guess_count();
+        let backtrack_count = self.get_backtrack_count();
+        let difficulty_string = self.get_difficulty();
+        if self.print_style == PrintStyle::CSV {
+            sb.push_str(format!("{:?}", difficulty_string).as_str());
+            sb.push_str(",");
+            sb.push_str(given_count.to_string().as_str());
+            sb.push_str(",");
+            sb.push_str(single_count.to_string().as_str());
+            sb.push_str(",");
+            sb.push_str(hidden_single_count.to_string().as_str());
+            sb.push_str(",");
+            sb.push_str(naked_pair_count.to_string().as_str());
+            sb.push_str(",");
+            sb.push_str(hidden_pair_count.to_string().as_str());
+            sb.push_str(",");
+            sb.push_str(pointing_pair_triple_count.to_string().as_str());
+            sb.push_str(",");
+            sb.push_str(box_reduction_count.to_string().as_str());
+            sb.push_str(",");
+            sb.push_str(guess_count.to_string().as_str());
+            sb.push_str(",");
+            sb.push_str(backtrack_count.to_string().as_str());
+            sb.push_str(",");
+        } else {
+            sb.push_str("Difficulty: ");
+            sb.push_str(format!("{:?}", difficulty_string).as_str());
+            sb.push_str(NL);
+            sb.push_str("Number of Givens: ");
+            sb.push_str(given_count.to_string().as_str());
+            sb.push_str(NL);
+            sb.push_str("Number of Singles: ");
+            sb.push_str(single_count.to_string().as_str());
+            sb.push_str(NL);
+            sb.push_str("Number of Hidden Singles: ");
+            sb.push_str(hidden_single_count.to_string().as_str());
+            sb.push_str(NL);
+            sb.push_str("Number of Naked Pairs: ");
+            sb.push_str(naked_pair_count.to_string().as_str());
+            sb.push_str(NL);
+            sb.push_str("Number of Hidden Pairs: ");
+            sb.push_str(hidden_pair_count.to_string().as_str());
+            sb.push_str(NL);
+            sb.push_str("Number of Pointing Pairs/Triples: ");
+            sb.push_str(pointing_pair_triple_count.to_string().as_str());
+            sb.push_str(NL);
+            sb.push_str("Number of Box/Line Intersections: ");
+            sb.push_str(box_reduction_count.to_string().as_str());
+            sb.push_str(NL);
+            sb.push_str("Number of Guesses: ");
+            sb.push_str(guess_count.to_string().as_str());
+            sb.push_str(NL);
+            sb.push_str("Number of Backtracks: ");
+            sb.push_str(backtrack_count.to_string().as_str());
+            sb.push_str(NL);
         }
         sb
     }
@@ -1715,7 +1806,7 @@ impl QQWing {
      * Given a value for a cell (0-8) and a cell number (0-80) calculate the
      * offset into the possibility array (0-728).
      */
-    pub fn get_possibility_index(value_index: usize, cell: usize) -> usize {
+    pub(crate) fn get_possibility_index(value_index: usize, cell: usize) -> usize {
         value_index + (ROW_COL_SEC_SIZE * cell)
     }
 
@@ -1723,7 +1814,7 @@ impl QQWing {
      * Given the index of a cell (0-80) calculate the row (0-8) in which it
      * resides.
      */
-    pub fn cell_to_row(cell: usize) -> usize {
+    pub(crate) fn cell_to_row(cell: usize) -> usize {
         cell / ROW_COL_SEC_SIZE
     }
 
@@ -1731,7 +1822,7 @@ impl QQWing {
      * Given the index of a cell (0-80) calculate the column (0-8) in which that
      * cell resides.
      */
-    pub fn cell_to_column(cell: usize) -> usize {
+    pub(crate) fn cell_to_column(cell: usize) -> usize {
         cell % ROW_COL_SEC_SIZE
     }
 
@@ -1739,7 +1830,7 @@ impl QQWing {
      * Given the index of a cell (0-80) calculate the section (0-8) in which it
      * resides.
      */
-    pub fn cell_to_section(cell: usize) -> usize {
+    pub(crate) fn cell_to_section(cell: usize) -> usize {
         (cell / SEC_GROUP_SIZE * GRID_SIZE) + (QQWing::cell_to_column(cell) / GRID_SIZE)
     }
 
@@ -1747,7 +1838,7 @@ impl QQWing {
      * Given the index of a cell (0-80) calculate the cell (0-80) that is the
      * upper left start cell of that section.
      */
-    pub fn cell_to_section_start_cell(cell: usize) -> usize {
+    pub(crate) fn cell_to_section_start_cell(cell: usize) -> usize {
         (cell / SEC_GROUP_SIZE * SEC_GROUP_SIZE)
             + (QQWing::cell_to_column(cell) / GRID_SIZE * GRID_SIZE)
     }
@@ -1755,14 +1846,14 @@ impl QQWing {
     /**
      * Given a row (0-8) and a column (0-8) calculate the cell (0-80).
      */
-    pub fn row_column_to_cell(row: usize, column: usize) -> usize {
+    pub(crate) fn row_column_to_cell(row: usize, column: usize) -> usize {
         row * ROW_COL_SEC_SIZE + column
     }
 
     /**
      * Given a section (0-8) calculate the first cell (0-80) of that section.
      */
-    pub fn section_to_first_cell(section: usize) -> usize {
+    pub(crate) fn section_to_first_cell(section: usize) -> usize {
         (section % GRID_SIZE * GRID_SIZE) + (section / GRID_SIZE * SEC_GROUP_SIZE)
     }
 
@@ -1770,23 +1861,17 @@ impl QQWing {
      * Given a section (0-8) and an offset into that section (0-8) calculate the
      * cell (0-80)
      */
-    pub fn section_to_cell(section: usize, offset: usize) -> usize {
+    pub(crate) fn section_to_cell(section: usize, offset: usize) -> usize {
         QQWing::section_to_first_cell(section)
             + ((offset / GRID_SIZE) * ROW_COL_SEC_SIZE)
             + (offset % GRID_SIZE)
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, EnumString, EnumIter)]
 pub enum PrintStyle {
     ONELINE,
     COMPACT,
     READABLE,
     CSV,
-}
-
-pub enum Action {
-    NONE,
-    GENERATE,
-    SOLVE,
 }
