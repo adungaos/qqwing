@@ -8,8 +8,8 @@ authors = [
 ]
 repository = "https://github.com/adungaos/qqwing"
 keywords = ["qqwing", "Sudoku"]
-categories = ["algorithms", "games", "puzzles"]
-license = "MIT"
+categories = ["algorithms", "games"]
+license = "GPL"
 readme = "./README.md"
 
 [profile.dev]
