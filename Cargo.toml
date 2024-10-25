@@ -1,14 +1,14 @@
 [package]
 name = "qqwing"
 edition = "2021"
-version = "1.3.4"
+version = "1.3.5"
 description = "QQwing is software for generating and solving Sudoku puzzles. This is a rust version."
 authors = [
   "Adun Gaos <adungaos@gmail.com>",
 ]
 repository = "https://github.com/adungaos/qqwing"
 keywords = ["qqwing", "Sudoku"]
-categories = ["algorithms"]
+categories = ["algorithms", "game", "puzzle"]
 license = "MIT"
 readme = "./README.md"
 
