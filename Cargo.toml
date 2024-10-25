@@ -9,7 +9,7 @@ authors = [
 repository = "https://github.com/adungaos/qqwing"
 keywords = ["qqwing", "Sudoku"]
 categories = ["algorithms", "games"]
-license = "GPL"
+license = "GPL-2.0-or-later"
 readme = "./README.md"
 
 [profile.dev]
